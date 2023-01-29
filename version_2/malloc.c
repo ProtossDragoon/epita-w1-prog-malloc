@@ -1,0 +1,327 @@
+#include <unistd.h>
+#include <string.h>
+#include <err.h>
+#include "malloc.h"
+
+#include <stdio.h>
+
+const size_t HSIZE = sizeof(header);
+const size_t YES = 1;
+const size_t NO = 0;
+
+static header* _sentinel = NULL;
+
+void* get_data(header* h)
+{
+    // Option:
+    //   return (void*)((size_t)h + HSIZE);
+    return (void*)(h + 1);
+}
+
+header* get_header_from_data(void* data)
+{
+    // Option:
+    //   return (header*)((size_t)data - HSIZE);
+    return ((header*)data) - 1;
+}
+
+size_t get_total(header* h)
+{
+    // DEBUG:
+    //   printf("h\t: %p\n", h);
+    //   printf("h->next\t: %p\n", h->next);
+    //   printf("h->prev\t: %p\n", h->prev);
+    //   printf("h+HSIZE\t: %p\n", h+HSIZE);
+    return (size_t)h->next - ((size_t)h + HSIZE);
+}
+
+header* get_sentinel()
+{
+    // TODO:
+    // - Define and initialize a static variable to NULL.
+    // - If this variable is NULL,
+    //   it is the first call to the function.
+    //   So, set it to the initial address of the heap
+    //   (the initial value of the program break).
+    // - If this variable is not NULL,
+    //   it contains the initial value of the heap,
+    //   which is also the address of the sentinel.
+    //   So, just return it.
+    if (_sentinel != NULL) {
+        return _sentinel;
+    }
+    _sentinel = (header*) sbrk(0);
+    sbrk(HSIZE);
+    _sentinel->prev = NULL;
+    _sentinel->next = sbrk(0);
+    _sentinel->size = 0;
+    _sentinel->free = NO;
+}
+
+void init_heap()
+{
+    // TODO:
+    // - Get the address of the sentinel
+    // - Allocate the memory for the sentinel
+    //   (obviously do not use malloc).
+    // - Initialize the sentinel with the following values:
+    //   - prev = NULL
+    //   - next = current program break
+    //   - size = 0
+    //   - free = No
+    _sentinel = NULL; // TODO: Free the memory allocated for the sentinel.
+    get_sentinel();
+}
+
+size_t _get_multiple_of_8(size_t size)
+{
+    if (size % 8 == 0) {
+        return size;
+    }
+    return (size / 8 + 1) * 8;
+}
+
+header* expand_heap(header* last_header, size_t size)
+{
+    // TODO:
+    // - Get the current program break.
+    // - Expand the heap
+    //   (Allocate the memory for the
+    //    new header and the data section.)
+    //   If an error occurs, return NULL.
+    // - Initialize the next and prev fields of the new header.
+    // - Update the previous header.
+    // - Return the new header.
+    // NOTE:
+    // - This function have to be called only
+    //   when the value of the last_header is same as the program break.
+    size_t size_multiple_of_8 = _get_multiple_of_8(size);
+    sbrk(HSIZE + size_multiple_of_8);
+    header* new_header = last_header->next;
+    new_header->prev = last_header;
+    new_header->next = sbrk(0);
+    new_header->size = size;
+    new_header->free = NO;
+    last_header->next = new_header;
+    return new_header;
+}
+
+int _is_allocatable(header* header, size_t size)
+{
+    if (header == _sentinel) {
+        return NO;
+    }
+    if (header->free == NO) {
+        return NO;
+    }
+    if (get_total(header) < size) {
+        return NO;
+    }
+    return YES;
+}
+
+int _is_splitable(header* header, size_t size)
+{
+    size_t area_left = get_total(header) - size;
+    if (area_left >= HSIZE + 8) {
+        return YES;
+    }
+    return NO;
+}
+
+header* find_free_chunk(size_t size)
+{
+    // TODO:
+    // - Iterate over the chunks and return
+    //   the first chunk (the address of the header)
+    //   that is free and large enough to store "size" bytes
+    //   (compare the total number of bytes with "size").
+    // - If no chunk can be found,
+    //   return the address of the last header.
+    header* last_header = get_sentinel();
+    while (last_header->next != sbrk(0)) {
+        if (_is_allocatable(last_header, size)) {
+            return last_header;
+        }
+        last_header = last_header->next;
+    }
+    return last_header;
+}
+
+void* my_malloc(size_t size)
+{
+    // TODO:
+    // - If "size" is 0, return NULL.
+    // - "size" must be a multiple of eight.
+    //   If it is not, work out the next multiple of eight
+    //   and use this value to find a free chunk large enough.
+    // - Get the first free chunk large enough
+    //   (or the last chunk).
+    // - If no chunk can be found, expand the heap.
+    // - Do not forget to update the "size" and the "free" fields. ✅
+    //   Be careful, the "size" field of the header
+    //   must be initialized with the "size" parameter ✅
+    //   (not with the next multiple of eight). ✅
+    // - Return the address of the data section. ✅
+    // - Change your my_malloc() function 
+    //   so that it splits a chunk if it is large enough. ✅
+    if (size == 0) {
+        return NULL;
+    }
+    header* found_header = find_free_chunk(size);
+    // Check the found_header is free or not.
+    // Because the found_header is the last chunk, 
+    // that chunk could be usable.
+    // We have to decide whether expand the heap or not.
+    // So, check one more time.
+    if(_is_allocatable(found_header, size)) {
+        size_t size_multiple_of_8 = _get_multiple_of_8(size);
+        if(_is_splitable(found_header, size_multiple_of_8)) {
+            // Split into two chuncks if the free memory space is large enough.
+            header* new_header = (header*)((size_t)found_header + HSIZE + size_multiple_of_8);
+            new_header->prev = found_header;
+            new_header->next = found_header->next;
+            new_header->free = YES;
+            found_header->next = new_header;
+            new_header->size = get_total(new_header);
+        }
+        found_header->size = size;
+        found_header->free = NO;
+        return get_data(found_header);
+    }
+    header* last_header = expand_heap(found_header, size);
+    return get_data(last_header);
+}
+
+void* my_calloc(size_t nmemb, size_t size)
+{
+    // TODO:
+    // - Work out the size in bytes. ✅
+    //   To do so, you have to multiply "nmemb" and "size". ✅
+    //   Use __builtin_mul_overflow() to detect an overflow. ✅
+    //   If an overflow occurs, return NULL. ✅
+    // - Call my_malloc() and return NULL if an error occurs. ✅
+    // - Fill the memory space with zeros (use memset(3)). ✅
+    // - Return the address of the data section. ✅
+    size_t to_allocate_byte = 0;
+    if (__builtin_mul_overflow(nmemb, size, &to_allocate_byte)) {
+        return NULL; // Overflow
+    }
+    // to_allocate_byte is the size in bytes (nmemb * size).
+    void* data_section = my_malloc(to_allocate_byte);
+    if (data_section == NULL) {
+        return NULL;
+    }
+    memset(data_section, 0, size);
+    return data_section;
+}
+
+header* _get_near_free_chunk(header* header)
+{
+    if (header->prev != _sentinel) {
+        if (header->prev->free == YES) {
+            return header->prev;
+        }
+    }
+    if (header->next != sbrk(0)) {
+        if (header->next->free == YES) {
+            return header->next;
+        }
+    }
+    return NULL;
+}
+
+header* _merge_two_chunk(header* header1, header* header2)
+{
+    if (header1->next != header2) {
+        // Reorder the header1 and header2
+        header* tmp = header1;
+        header1 = header2;
+        header2 = tmp;
+    }
+    header1->next = header2->next;
+    header1->size = header1->size + header2->size;
+    header2->next->prev = header1;
+    return header1;
+}
+
+void _decrease_program_break(header* last_header) 
+{
+    header* new_last_header = last_header->prev;
+    // Decrease the program break
+    // NOTE
+    //  MacOS cannot deallocate the memory with sbrk() 
+    //  and a negative valued argument.
+    // DEBUG
+    //  printf("sbrk:\t %p\n", sbrk(0));
+    size_t t = HSIZE + get_total(last_header);
+    // DEBUG
+    //   printf("t:\t %d\n", t);
+    sbrk(-1 * t);
+    // DEBUG
+    //   printf("sbrk:\t %p\n", sbrk(0));
+}
+
+void my_free(void* ptr)
+{
+    // TODO:
+    // - If "ptr" is NULL, no operation is performed. ✅
+    // - Get the header. ✅
+    // - Mark the chunk as free. ✅
+    // - The chunk that must be freed merges with the previous chunk (if free).
+    // - The chunk that must be freed merges with the next chunk (if free).
+    // - The program break is decremented when the last chunk is freed.
+    if (ptr == NULL) {
+        return;
+    }
+    header* header_ = get_header_from_data(ptr);
+    header_->free = YES;
+    while (1) {
+        header* header_free = _get_near_free_chunk(header_);
+        if (header_free == NULL) {
+            // 1. The case that the header is the first chunk.
+            // 2. The case that the header is the last chunk.
+            break;
+        }
+        header_ = _merge_two_chunk(header_, header_free);
+    }
+    if (header_->next == sbrk(0)) {
+        _decrease_program_break(header_);
+    }
+}
+
+void* my_realloc(void* ptr, size_t size)
+{
+    // TODO:
+    // - If "ptr" is NULL, realloc() is equivalent to malloc(). ✅
+    // - If "size" is 0 (and "ptr" is not NULL), ✅
+    //   realloc() is equivalent to free() and return NULL. ✅
+    // - Get the header. ✅
+    // - If this chunk is large enough, just update the size. ✅
+    // - Otherwise:
+    //   - Allocate a new memory space with my_malloc()
+    //     (return NULL if an error occurs). ✅
+    //   - Copy the bytes from the previous memory
+    //     space to the new one (use memcpy(3)). ✅
+    //   - Free the previous memory space. ✅
+    //   - Return the address of the new memory space. ✅
+    if (ptr == NULL) {
+        return my_malloc(size);
+    }
+    if (size == 0) {
+        my_free(ptr);
+        return NULL;
+    }
+    header* header = get_header_from_data(ptr);
+    if (get_total(header) >= size) {
+        header->size = size;
+        return ptr;
+    }
+    void* new_data_section = my_malloc(size);
+    if (new_data_section == NULL) {
+        return NULL;
+    }
+    memcpy(new_data_section, ptr, header->size);
+    my_free(ptr);
+    return new_data_section;
+}
